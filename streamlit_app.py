@@ -52,32 +52,30 @@ def get_video_info(video_id):
         return None
 
 def get_transcript(video_id, language_codes=['en', 'hi']):
-    """Get transcript in specified languages"""
+    """Get transcript in specified languages, prioritizing official then auto-generated, else None."""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # Try to get manually created subtitles first
+        # 1. Try to get official (manual) subtitles in preferred languages
         for transcript in transcript_list:
             if transcript.language_code in language_codes and not transcript.is_generated:
                 return transcript.fetch(), transcript.language_code, False
-        
-        # If no manual subtitles, get auto-generated
+        # 2. Try to get auto-generated subtitles in preferred languages
         for transcript in transcript_list:
             if transcript.language_code in language_codes and transcript.is_generated:
                 return transcript.fetch(), transcript.language_code, True
-                
-        # If no subtitles in desired languages, get any available
+        # 3. Try to get any official (manual) subtitles
         for transcript in transcript_list:
             if not transcript.is_generated:
                 return transcript.fetch(), transcript.language_code, False
-                
+        # 4. Try to get any auto-generated subtitles
         for transcript in transcript_list:
             if transcript.is_generated:
                 return transcript.fetch(), transcript.language_code, True
-                
+        # 5. No subtitles found
+        return None, None, None
     except Exception as e:
         return None, None, None
-
+    
 def download_audio(video_url):
     """Download audio from YouTube video (Streamlit Cloud compatible)"""
     try:
