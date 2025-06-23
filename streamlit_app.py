@@ -12,15 +12,6 @@ import torch
 from collections import Counter
 import requests
 
-# Try to import whisper with error handling
-try:
-    from faster_whisper import WhisperModel
-    WHISPER_AVAILABLE = True
-except Exception as e:
-    st.warning(f"Whisper not available: {e}. Audio transcription will be disabled.")
-    WHISPER_AVAILABLE = False
-    WhisperModel = None
-
 # Initialize summarization pipeline
 @st.cache_resource
 def load_summarizer():
@@ -87,33 +78,9 @@ def get_transcript(video_id, language_codes=['en', 'hi']):
     except Exception as e:
         return None, None, None
 
-def find_ffmpeg_location():
-    """Find FFmpeg installation location"""
-    # Common FFmpeg locations to check
-    potential_locations = [
-        # WinGet installation location
-        os.path.join(os.environ.get('LOCALAPPDATA', ''), 
-                    'Microsoft', 'WinGet', 'Packages', 
-                    'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe',
-                    'ffmpeg-7.1.1-full_build', 'bin'),
-        # Other common locations
-        'C:\\ffmpeg\\bin',
-        'C:\\Program Files\\ffmpeg\\bin',
-        'C:\\Program Files (x86)\\ffmpeg\\bin',
-    ]
-    
-    for location in potential_locations:
-        if os.path.exists(os.path.join(location, 'ffmpeg.exe')):
-            return location
-    
-    return None
-
 def download_audio(video_url):
-    """Download audio from YouTube video"""
+    """Download audio from YouTube video (Streamlit Cloud compatible)"""
     try:
-        # Find FFmpeg location
-        ffmpeg_location = find_ffmpeg_location()
-
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': '%(title)s.%(ext)s',
@@ -130,59 +97,26 @@ def download_audio(video_url):
                 'Accept-Language': 'en-US,en;q=0.9',
             },
         }
-        # Add FFmpeg location if found
-        if ffmpeg_location:
-            ydl_opts['ffmpeg_location'] = ffmpeg_location
-
         with tempfile.TemporaryDirectory() as temp_dir:
             ydl_opts['outtmpl'] = os.path.join(temp_dir, 'audio.%(ext)s')
-
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=True)
                 audio_file = os.path.join(temp_dir, 'audio.mp3')
-
                 if os.path.exists(audio_file):
                     with open(audio_file, 'rb') as f:
                         audio_data = f.read()
-
-                    # Create a temporary file that won't be automatically deleted
                     temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
                     temp_audio.write(audio_data)
                     temp_audio.close()
-
                     return temp_audio.name
-
     except Exception as e:
         st.error(f"Error downloading audio: {str(e)}")
         return None
 
-@st.cache_resource
-def load_whisper_model():
-    """Load Whisper model"""
-    if not WHISPER_AVAILABLE:
-        return None
-    return WhisperModel("base", device="cpu", compute_type="int8")
-
 def transcribe_audio(audio_file, language='en'):
-    """Transcribe audio using Faster Whisper"""
-    if not WHISPER_AVAILABLE:
-        st.error("Whisper is not available. Cannot transcribe audio.")
-        return None
-    
-    try:
-        model = load_whisper_model()
-        if model is None:
-            return None
-        
-        segments, info = model.transcribe(audio_file, language=language)
-        transcript_text = ""
-        for segment in segments:
-            transcript_text += segment.text + " "
-        
-        return transcript_text.strip()
-    except Exception as e:
-        st.error(f"Error transcribing audio: {str(e)}")
-        return None
+    """Transcribe audio (disabled on Streamlit Community Cloud)"""
+    st.warning("Audio transcription is not available on Streamlit Community Cloud. Please use videos with subtitles.")
+    return None
 
 def translate_text(text, target_lang='en'):
     """Translate text to target language, using Hugging Face for Hindi to English, else deep-translator."""
@@ -437,13 +371,22 @@ def process_video(video_url, summarizer, summary_type="Single Summary", num_chap
         return None, None, None, None, None
 
 def get_video_metadata(video_url):
-    """Fetch video title and thumbnail using yt_dlp."""
+    """Fetch video title, thumbnail, duration, views, likes using yt_dlp."""
     try:
         with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
             info = ydl.extract_info(video_url, download=False)
-            return info.get('title', ''), info.get('thumbnail', '')
+            return {
+                'title': info.get('title', ''),
+                'thumbnail': info.get('thumbnail', ''),
+                'duration': info.get('duration', 0),
+                'view_count': info.get('view_count', 0),
+                'like_count': info.get('like_count', 0),
+                'uploader': info.get('uploader', ''),
+                'upload_date': info.get('upload_date', ''),
+                'description': info.get('description', ''),
+            }
     except Exception:
-        return '', ''
+        return {}
 
 @st.cache_data(show_spinner=False)
 def cached_get_transcript(video_id, language_codes=['en', 'hi']):
@@ -485,6 +428,27 @@ def extract_keywords(text, top_n=8):
     filtered = [w for w in words if w not in stopwords]
     return [w for w, _ in Counter(filtered).most_common(top_n)]
 
+def extract_key_points(text, n=5):
+    """Extract n key sentences as bullet points."""
+    sentences = re.split(r'(?<=[.!?]) +', text)
+    # Pick longest/most informative sentences
+    sentences = sorted(sentences, key=lambda s: len(s), reverse=True)
+    return [s.strip() for s in sentences[:n] if len(s.strip()) > 30]
+
+def tldr_summary(text, summarizer):
+    """Generate a very short summary (TL;DR)."""
+    try:
+        summary = summarizer(
+            text,
+            max_length=40,
+            min_length=10,
+            do_sample=False,
+            truncation=True
+        )
+        return summary[0]['summary_text']
+    except Exception:
+        return ''
+
 # Streamlit UI
 def main():
     st.set_page_config(page_title="YouTube Video Summarizer", page_icon="📺")
@@ -495,12 +459,25 @@ def main():
     video_url = st.text_input("Enter YouTube Video URL:", placeholder="https://www.youtube.com/watch?v=...")
 
     # Show video metadata
+    video_meta = {}
     if video_url:
-        title, thumbnail = get_video_metadata(video_url)
-        if title:
-            st.markdown(f"**Video Title:** {title}")
-        if thumbnail:
-            st.image(thumbnail, width=320)
+        video_meta = get_video_metadata(video_url)
+        if video_meta.get('title'):
+            st.markdown(f"**Video Title:** {video_meta['title']}")
+        if video_meta.get('thumbnail'):
+            st.image(video_meta['thumbnail'], width=320)
+        # Show more metadata
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.caption(f"Duration: {video_meta.get('duration', 0)//60} min")
+        with col2:
+            st.caption(f"Views: {video_meta.get('view_count', 0):,}")
+        with col3:
+            st.caption(f"Likes: {video_meta.get('like_count', 0):,}")
+        st.caption(f"Uploader: {video_meta.get('uploader', '')}")
+        if video_meta.get('description'):
+            with st.expander("Show video description"):
+                st.write(video_meta['description'])
 
     # Settings in sidebar
     with st.sidebar:
@@ -543,11 +520,12 @@ def main():
                 return
             with st.spinner("Fetching transcript..."):
                 transcript, language, is_generated = cached_get_transcript(video_id)
+            subtitle_type = 'Auto-generated' if is_generated else 'Manual'
             if transcript:
                 formatter = TextFormatter()
                 transcript_text = formatter.format_transcript(transcript)
-                st.success(f"Found {'auto-generated' if is_generated else 'manual'} subtitles in {language}")
-                st.markdown(f"**Detected Language:** {language}")
+                st.success(f"Found {subtitle_type} subtitles in {language}")
+                st.markdown(f"**Detected Language:** {language} ({subtitle_type})")
                 # Translate if not in English
                 if language != 'en':
                     st.info("Translating to English...")
@@ -574,15 +552,27 @@ def main():
                 summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
             else:
                 summarizer = load_summarizer()
+            # TL;DR summary
+            st.subheader("⚡ TL;DR (Summary at a Glance)")
+            tldr = tldr_summary(transcript_text, summarizer)
+            st.info(tldr)
             # Summarize
             if summary_type == "Chapter-wise Summary" and num_chapters:
                 st.info(f"Generating {num_chapters} chapter summaries...")
                 chapters = create_chapter_summaries(transcript_text, summarizer, num_chapters)
                 st.success(f"Generated {len(chapters)} chapter summaries!")
+                st.subheader("📚 Table of Contents")
+                toc = '\n'.join([f"{i+1}. {c['title']}" for i, c in enumerate(chapters)])
+                st.markdown(toc)
                 st.subheader("📚 Chapter Summaries")
                 for i, chapter in enumerate(chapters):
-                    st.markdown(f"**Chapter {chapter['chapter']}**")
+                    st.markdown(f"**Chapter {chapter['chapter']}: {chapter['title']}**")
                     st.write(cached_summarize_text(chapter['summary'], summarizer, summary_length.lower(), summary_style.lower()))
+                    # Key points
+                    key_points = extract_key_points(chapter['summary'])
+                    if key_points:
+                        st.markdown("**Key Points:**")
+                        st.markdown('\n'.join([f"- {kp}" for kp in key_points]))
                     st.caption(f"Words in this chapter: {chapter['word_count']}")
             else:
                 st.info("Generating summary...")
@@ -590,6 +580,11 @@ def main():
                 st.success("Summary generated successfully!")
                 st.subheader("📝 Summary")
                 st.write(summary)
+                # Key points
+                key_points = extract_key_points(summary)
+                if key_points:
+                    st.markdown("**Key Points:**")
+                    st.markdown('\n'.join([f"- {kp}" for kp in key_points]))
             # Download transcript
             st.download_button(
                 label="📥 Download Transcript",
@@ -598,7 +593,10 @@ def main():
                 mime="text/plain",
                 key="transcript_btn_final"
             )
-    
+            # Show/hide transcript
+            with st.expander("Show full transcript"):
+                st.write(transcript_text)
+
     # Instructions in sidebar
     with st.sidebar:
         st.header("📖 How it works")
