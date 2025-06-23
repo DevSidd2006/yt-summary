@@ -1,0 +1,10 @@
+streamlit
+youtube-transcript-api
+faster-whisper
+yt-dlp
+ffmpeg-python
+transformers
+torch
+sentencepiece
+protobuf
+deep-translator
