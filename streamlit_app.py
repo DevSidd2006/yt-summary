@@ -517,7 +517,7 @@ def main():
                 st.error("Invalid YouTube URL")
                 return
             with st.spinner("Fetching transcript..."):
-                transcript, language, is_generated = cached_get_transcript(video_id)
+                transcript, language, is_generated = get_best_transcript(video_id)
             subtitle_type = 'Auto-generated' if is_generated else 'Manual'
             transcript_text = None
             if transcript:
@@ -529,7 +529,6 @@ def main():
                 if language == 'hi':
                     st.info("Translating Hindi subtitles to English...")
                     transcript_text = translate_text(transcript_text, 'en')
-                # Optionally, you can add more language handling here
             if not transcript_text:
                 st.error("No subtitles (manual or auto-generated) found for this video. Please try another video.")
                 return
