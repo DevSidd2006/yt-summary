@@ -621,5 +621,42 @@ def main():
         - **Translation**: Google Translate
         """)
 
+def get_best_transcript(video_id):
+    """Get the best available transcript, prioritizing manual/auto English, then Hindi, then any."""
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # 1. Manual English
+        for t in transcript_list:
+            if t.language_code == 'en' and not t.is_generated:
+                return t.fetch(), 'en', False
+        # 2. Auto English
+        for t in transcript_list:
+            if t.language_code == 'en' and t.is_generated:
+                return t.fetch(), 'en', True
+        # 3. Manual Hindi
+        for t in transcript_list:
+            if t.language_code == 'hi' and not t.is_generated:
+                return t.fetch(), 'hi', False
+        # 4. Auto Hindi
+        for t in transcript_list:
+            if t.language_code == 'hi' and t.is_generated:
+                return t.fetch(), 'hi', True
+        # 5. Any manual
+        for t in transcript_list:
+            if not t.is_generated:
+                return t.fetch(), t.language_code, False
+        # 6. Any auto
+        for t in transcript_list:
+            if t.is_generated:
+                return t.fetch(), t.language_code, True
+        return None, None, None
+    except Exception as e:
+        # Try to fetch generated transcript directly if possible
+        try:
+            generated = YouTubeTranscriptApi.get_transcript(video_id)
+            return generated, 'auto', True
+        except Exception:
+            return None, None, None
+
 if __name__ == "__main__":
     main()
