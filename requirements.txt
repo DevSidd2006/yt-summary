@@ -1,9 +1,7 @@
 streamlit
 youtube-transcript-api
-faster-whisper
 yt-dlp
-ffmpeg-python
-transformers
+transformers>=4.30.0
 torch
 sentencepiece
 protobuf
